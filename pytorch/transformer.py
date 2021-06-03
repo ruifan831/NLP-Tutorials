@@ -171,7 +171,7 @@ class Transformer(nn.Module):
     
     def forward(self,x,y,training= None):
         x_embed, y_embed = self.embed(x), self.embed(y) # [n, step, emb_dim] * 2
-        pad_mask = self._pad_mask(x)    # [n, 1, step, step]
+        pad_mask = self._pad_mask(x,x)    # [n, 1, step, step]
         encoded_z = self.encoder(x_embed,training,pad_mask) # [n, step, emb_dim]
         yz_look_ahead_mask = self._look_ahead_mask(y)   # [n, 1, step, step]
         decoded_z = self.decoder(y_embed,encoded_z, training, yz_look_ahead_mask, pad_mask) # [n, step, emb_dim]
@@ -190,9 +190,10 @@ class Transformer(nn.Module):
     def _pad_bool(self, seqs):
         o = torch.eq(seqs,self.padding_idx) # [n, step]
         return o
-    def _pad_mask(self, seqs):
-        len_q = seqs.size(1)
-        mask = self._pad_bool(seqs).unsqueeze(1).expand(-1,len_q,-1)    # [n, len_q, step]
+    def _pad_mask(self, q, k):
+        len_q = q.size(1)
+        mask = self._pad_bool(k)
+        mask = mask.unsqueeze(1).expand(-1,len_q, -1)
         return mask.unsqueeze(1)    # [n, 1, len_q, step]
     
     def _look_ahead_mask(self,seqs):
@@ -209,13 +210,13 @@ class Transformer(nn.Module):
         # Initialize Decoder input by constructing a matrix M([n, self.max_len+1]) with initial value:
         # M[n,0] = start token id
         # M[n,:] = 0
-        target = torch.from_numpy(utils.pad_zero(np.array([[v2i["<GO>"], ] for _ in range(len(src))]), self.max_len+1)).to(device)
+        target = torch.from_numpy(utils.pad_zero(np.array([[v2i["<GO>"], ] for _ in range(len(src))]), self.max_len+1)).type(torch.LongTensor).to(device)
         x_embed = self.embed(src_pad)
-        encoded_z = self.encoder(x_embed,False,mask=self._pad_mask(src_pad))
+        encoded_z = self.encoder(x_embed,False,mask=self._pad_mask(src_pad,src_pad))
         for i in range(0,self.max_len):
             y = target[:,:-1]
             y_embed = self.embed(y)
-            decoded_z = self.decoder(y_embed,encoded_z,False,self._look_ahead_mask(y),self._pad_mask(src_pad))
+            decoded_z = self.decoder(y_embed,encoded_z,False,self._look_ahead_mask(y),self._pad_mask(src_pad,src_pad))
             o = self.o(decoded_z)[:,i,:]
             idx = o.argmax(dim = 1).detach()
             # Update the Decoder input, to predict for the next position.
